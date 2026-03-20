@@ -1,0 +1,78 @@
+import { useGatewayContext } from '@cvp/componentes-posvenda';
+import { IUseApiQueryOptions } from '@src/shared/lib/fetchApi/types';
+import { useGatewayCvpClient } from '@src/shared/lib/fetchApi/useGatewayCvpClient';
+import { QueryKey, useQuery, UseQueryResult } from '@tanstack/react-query';
+import { AxiosResponse } from 'axios';
+import { useRef } from 'react';
+
+export type ApiResponseMeta = {
+  headers: AxiosResponse['headers'];
+  status: number;
+  statusText: string;
+};
+
+export type UseApiQueryResult<TData> = UseQueryResult<TData, Error> & {
+  responseMeta: ApiResponseMeta | null;
+};
+
+// Overload 1: COM mapResponse → retorna TViewModel
+export function useApiQuery<TResponse = unknown, TViewModel = unknown>(
+  options: IUseApiQueryOptions<TResponse, TViewModel> & {
+    mapResponse: (data: TResponse) => TViewModel;
+  },
+): UseApiQueryResult<TViewModel>;
+
+// Overload 2: SEM mapResponse → retorna TResponse
+export function useApiQuery<TResponse = unknown>(
+  options: IUseApiQueryOptions<TResponse, never> & {
+    mapResponse?: undefined;
+  },
+): UseApiQueryResult<TResponse>;
+
+// Implementação
+export function useApiQuery<TResponse = unknown, TViewModel = TResponse>({
+  queryKey,
+  endpoint,
+  queryOptions,
+  requestConfig,
+  mapResponse,
+}: IUseApiQueryOptions<TResponse, TViewModel>): UseApiQueryResult<TResponse | TViewModel> {
+  const { configuration } = useGatewayContext();
+  const api = useGatewayCvpClient();
+  const responseMetaRef = useRef<ApiResponseMeta | null>(null);
+
+  const finalQueryKey: QueryKey = queryKey
+    ? [
+        endpoint,
+        ...((Array.isArray(queryKey) ? queryKey : [queryKey]) as QueryKey[]),
+      ]
+    : [endpoint];
+
+  const queryResult = useQuery<TResponse | TViewModel, Error, TResponse | TViewModel, QueryKey>({
+    ...(queryOptions || {}),
+    retry: false,
+    queryKey: finalQueryKey,
+    queryFn: async () => {
+      const finalUrl = `${configuration.configure.operationPath}${endpoint}`;
+
+      const response = await api.post<TResponse>(
+        finalUrl,
+        { ...requestConfig.data },
+        requestConfig,
+      );
+
+      responseMetaRef.current = {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      };
+
+      return mapResponse ? mapResponse(response.data) : response.data;
+    },
+  });
+
+  return {
+    ...queryResult,
+    responseMeta: responseMetaRef.current,
+  } as UseApiQueryResult<TResponse | TViewModel>;
+}
